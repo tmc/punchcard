@@ -1,2 +1,6 @@
-punchtime is a cli interface to Oracel Peoplesoft's employee time recording utilities
--------------------------------------------------------------------------------------
+punchtime is a cli interface to Web-only clock in UIs
+------------------------------------------------------
+
+Oracle's Peoplesoft is the initial target
+
+License: GPL3

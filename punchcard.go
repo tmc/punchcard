@@ -169,7 +169,7 @@ func main() {
 		*user = os.Getenv("PUNCHCARD_USER")
 	}
 	if *user == "" {
-		fmt.Println(os.Stderr, "No user supplied.")
+		fmt.Fprintln(os.Stderr, "No user supplied.")
 		fmt.Print("enter username: ")
 		n, err := fmt.Scanln(user)
 		log.Println("scan:", n, err)
