@@ -1,5 +1,5 @@
-punchtime is a cli interface to clocking into Oracle Peoplesoft
----------------------------------------------------------------
+punchcard is a cli for Peoplesoft's Web Clock
+---------------------------------------------
 
 ```sh
  $ go get github.com/tmc/punchcard
