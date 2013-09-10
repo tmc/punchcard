@@ -1,6 +1,11 @@
-punchtime is a cli interface to Web-only clock in UIs
-------------------------------------------------------
+punchtime is a cli interface to clocking into Oracle Peoplesoft
+---------------------------------------------------------------
 
-Oracle's Peoplesoft is the initial target
+```sh
+ $ go get github.com/tmc/punchcard
+ $ punchcard -rootURL=http://hr.somedomain.com -user=usernamehere
+ $ punchcard -rootURL=http://hr.somedomain.com -user=usernamehere -in
+ $ punchcard -rootURL=http://hr.somedomain.com -user=usernamehere -out
+```
 
 License: GPL3

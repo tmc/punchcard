@@ -1,6 +1,4 @@
-// Package punchtime provides cli access to web-based time punching.
-//
-// Initial target: Oracle Peoplesoft
+// Package punchtime provides cli access the web clock in Oracle Peoplesoft
 package main
 
 import (
