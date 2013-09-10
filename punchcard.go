@@ -4,71 +4,79 @@
 package main
 
 import (
+	"bytes"
 	"flag"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"log"
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
+	"os"
+
+	"code.google.com/p/gopass"
+	"github.com/PuerkitoBio/goquery"
+	"github.com/tmc/keyring"
 )
 
-var rootURL = flag.String("rootURL", "", "Base URL to try to interact with this beast")
+var (
+	rootURL    = flag.String("rootURL", "", "Base URL to try to interact with this beast. Uses `PUNCHCARD_ROOT` if blank.")
+	user       = flag.String("user", "", "Username, attempts to user env var `PUNCHCARD_USER` if blank")
+	resavePass = flag.Bool("resave", false, "forces prompting for password")
+	debug      = flag.Bool("debug", false, "show request details for debugging purposes")
+	punchIn    = flag.Bool("in", false, "punch in")
+	punchOut   = flag.Bool("out", false, "punch out")
+)
 
 var urls = map[string]string{
-	"init":  "/psp/hrprd/?cmd=login",
-	"login": "/psp/hrprd/?cmd=login&languageCd=ENG",
+	"init":           "/psp/hrprd/?cmd=login",
+	"login":          "/psp/hrprd/?cmd=login&languageCd=ENG",
+	"timesheet":      "/psc/hrprd_1/EMPLOYEE/HRMS/c/ROLE_EMPLOYEE.TL_MSS_EE_SRCH_PRD.GBL",
+	"timeclock_form": "/psc/hrprd/EMPLOYEE/HRMS/c/ROLE_EMPLOYEE.TL_SS_JOB_SRCH_CLK.GBL",
+	"timeclock":      "/psc/hrprd/EMPLOYEE/HRMS/c/ROLE_EMPLOYEE.TL_WEBCLK_ESS.GBL",
 }
 
-//name="login"
-//<input type="hidden" name="timezoneOffset" value="0">
-//
-//<label class="onlineid">Online ID:</label>
-//
-//<!-- EDIT THIS LINE FOR THE PROPER INPUT NAME -->
-//<input type="text" id="userid" name="userid" class="onlineid"/ tabindex="2"><br />
-//
-//                            <label class="password">Password</label>
-//<!-- EDIT THIS LINE FOR THE PROPER INPUT NAME -->
-//<input type="password" id="pwd" name="pwd" class="password" tabindex="3"/><br />
-//
-//                                <p class="forgotpasswordline"><a href="https://myidentity.ku.edu/password/forgot">Forgot your KU password?</a> <span class="divider">|</span> <a href="https://kumc-id.kumc.edu/IDM/jsps/pwdmgt/ForgotPassword.jsf">Forgot your KUMC password?</a></p>
-//                                <input type="submit" name="submit" value="Sign in" class="signinbutton" onclick="submitAction(document.login)" tabindex="4"/>
-//                                </form>
-
-func NewClient(BaseURL string) *PunchTime {
+func NewClient(BaseURL string) *PunchCardClient {
 	cj, err := cookiejar.New(nil)
 	if err != nil {
 		panic(err)
 	}
-	return &PunchTime{
+	return &PunchCardClient{
 		BaseURL: BaseURL,
 		Client:  &http.Client{Jar: cj},
 	}
 }
 
-type PunchTime struct {
+type PunchCardClient struct {
 	BaseURL string
 	*http.Client
 }
 
-// Init contacts the initial url to start the cookie session
-func (p *PunchTime) Init() error {
-	return p.doGet(urls["init"])
+func NewTimeSheet(timesheetMarkup io.Reader) (*Timesheet, error) {
+	return parseTimesheet(timesheetMarkup)
 }
 
-func (p *PunchTime) doGet(url string) error {
+// Init contacts the initial url to start the cookie session
+func (p *PunchCardClient) Init() error {
+	_, err := p.doGet(urls["init"])
+	return err
+}
+
+func (p *PunchCardClient) doGet(url string) ([]byte, error) {
 	r, err := p.Get(*rootURL + url)
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer r.Body.Close()
 	body, err := ioutil.ReadAll(r.Body)
-	fmt.Println(string(body))
-	return err
+	if *debug {
+		fmt.Println(string(body))
+	}
+	return body, err
 }
 
-func (p *PunchTime) Login(username, password string) error {
+func (p *PunchCardClient) Login(username, password string) error {
 	r, err := p.PostForm(p.BaseURL+urls["login"],
 		url.Values{
 			"pwd":            {password},
@@ -81,13 +89,70 @@ func (p *PunchTime) Login(username, password string) error {
 	}
 	defer r.Body.Close()
 	body, err := ioutil.ReadAll(r.Body)
-	fmt.Println(string(body))
+	if *debug {
+		fmt.Println(string(body))
+	}
 	return err
+}
+
+func (p *PunchCardClient) Timesheet() (*Timesheet, error) {
+	buf, err := p.doGet(urls["timesheet"])
+
+	if err != nil {
+		return nil, err
+	}
+	return NewTimeSheet(bytes.NewReader(buf))
+}
+
+func (p *PunchCardClient) Clock(In bool) error {
+	var doc *goquery.Document
+	if r, err := p.doGet(urls["timeclock_form"]); err != nil {
+		log.Fatal(err)
+	} else {
+		var docerr error
+		doc, docerr = goquery.NewDocumentFromReader(bytes.NewReader(r))
+		if err != nil {
+			log.Fatal(docerr)
+		}
+	}
+
+	punchType := "1"
+	if In == false {
+		punchType = "2"
+	}
+
+	icsid, _ := doc.Find("#ICSID").Attr("value")
+	icStateNum, _ := doc.Find("#ICStateNum").Attr("value")
+
+	r, err := p.PostForm(p.BaseURL+urls["timeclock"], url.Values{
+		"ICAJAX":                    {"1"},
+		"ICAction":                  {"TL_LINK_WRK_TL_SAVE_PB$0"},
+		"ICStateNum":                {icStateNum},
+		"ICSID":                     {icsid},
+		"TL_RPTD_TIME_PUNCH_TYPE$0": {punchType},
+		"TASKGROUP$0":               {"PSNONCATSK"},
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer r.Body.Close()
+	body, err := ioutil.ReadAll(r.Body)
+	if *debug {
+		fmt.Println(string(body))
+	}
+
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 func main() {
 	flag.Parse()
 
+	if *rootURL == "" {
+		*rootURL = os.Getenv("PUNCHCARD_ROOT")
+	}
 	if *rootURL == "" {
 		log.Fatal("no -rootURL supplied")
 	}
@@ -100,5 +165,58 @@ func main() {
 		log.Fatal(err)
 	}
 
-	fmt.Println(utcOffset().Minutes())
+	if *user == "" {
+		*user = os.Getenv("PUNCHCARD_USER")
+	}
+	if *user == "" {
+		fmt.Println(os.Stderr, "No user supplied.")
+		fmt.Print("enter username: ")
+		n, err := fmt.Scanln(user)
+		log.Println("scan:", n, err)
+		log.Printf("'%s'\n", *user)
+	}
+
+	keyringKey := "punchcard" + *rootURL
+
+	pw, err := keyring.Get(keyringKey, *user)
+
+	if err == keyring.ErrNotFound || *resavePass {
+		pw, err = gopass.GetPass("enter password: ")
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		err = keyring.Set(keyringKey, *user, pw)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+	}
+
+	if err := client.Login(*user, pw); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+
+	if ts, err := client.Timesheet(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+	} else {
+		fmt.Println("EmployeeID:", ts.EmployeeID)
+		fmt.Println("Punch Status:", ts.Status())
+		fmt.Println("This week:", ts.Punches.Duration())
+	}
+
+	if *punchIn {
+		err := client.Clock(true)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "Error punching in:", err)
+			os.Exit(1)
+		}
+	} else if *punchOut {
+		err := client.Clock(false)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "Error punching out:", err)
+			os.Exit(1)
+		}
+	}
 }
