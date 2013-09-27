@@ -102,7 +102,7 @@ func (p *PunchCardClient) Timesheet() (*Timesheet, error) {
 	return NewTimeSheet(bytes.NewReader(buf))
 }
 
-func (p *PunchCardClient) Clock(In bool) error {
+func (p *PunchCardClient) Clock(punchType PunchType) error {
 	var doc *goquery.Document
 	if r, err := p.doGet(urls["timeclock_form"]); err != nil {
 		log.Fatal(err)
@@ -114,9 +114,13 @@ func (p *PunchCardClient) Clock(In bool) error {
 		}
 	}
 
-	punchType := "1"
-	if In == false {
-		punchType = "2"
+	var punchTypeStr string
+	if punchType == IN {
+		punchTypeStr = "1"
+	} else if punchType == OUT {
+		punchTypeStr = "2"
+	} else {
+		return fmt.Errorf("Unrecognized punch type:", punchType)
 	}
 
 	icsid, _ := doc.Find("#ICSID").Attr("value")
@@ -127,7 +131,7 @@ func (p *PunchCardClient) Clock(In bool) error {
 		"ICAction":                  {"TL_LINK_WRK_TL_SAVE_PB$0"},
 		"ICStateNum":                {icStateNum},
 		"ICSID":                     {icsid},
-		"TL_RPTD_TIME_PUNCH_TYPE$0": {punchType},
+		"TL_RPTD_TIME_PUNCH_TYPE$0": {punchTypeStr},
 		"TASKGROUP$0":               {"PSNONCATSK"},
 	})
 	if err != nil {
@@ -198,23 +202,32 @@ func main() {
 
 	if ts, err := client.Timesheet(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
 	} else {
 		fmt.Println("EmployeeID:", ts.EmployeeID)
 		fmt.Println("Punch Status:", ts.Status())
 		fmt.Println("This week:", ts.Punches.Duration())
-	}
 
-	if *punchIn {
-		err := client.Clock(true)
-		if err != nil {
-			fmt.Fprintln(os.Stderr, "Error punching in:", err)
-			os.Exit(1)
-		}
-	} else if *punchOut {
-		err := client.Clock(false)
-		if err != nil {
-			fmt.Fprintln(os.Stderr, "Error punching out:", err)
-			os.Exit(1)
+		if *punchIn {
+			if ts.Status() == IN {
+				fmt.Fprintf(os.Stderr, "Refusing to punch in twice")
+				os.Exit(1)
+			}
+			err := client.Clock(IN)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "Error punching in:", err)
+				os.Exit(1)
+			}
+		} else if *punchOut {
+			if ts.Status() != IN {
+				fmt.Fprintf(os.Stderr, "Refusing to punch out twice")
+				os.Exit(1)
+			}
+			err := client.Clock(OUT)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "Error punching out:", err)
+				os.Exit(1)
+			}
 		}
 	}
 }

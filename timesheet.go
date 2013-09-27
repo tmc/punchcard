@@ -11,11 +11,11 @@ type Timesheet struct {
 	Punches    Punches
 }
 
-func (t *Timesheet) Status() string {
+func (t *Timesheet) Status() PunchType {
 	if len(t.Punches) > 0 {
-		return t.Punches[len(t.Punches)-1].Type.String()
+		return t.Punches[len(t.Punches)-1].Type
 	}
-	return OUT.String()
+	return OUT
 }
 
 func parseTimesheet(timesheetMarkup io.Reader) (*Timesheet, error) {
